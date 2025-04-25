@@ -12,55 +12,50 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from "@/components/ui/use-toast"
 import { cn } from "@/lib/utils"
 import { uploadToBlob } from "@/lib/blob-utils"
+import { saveFileSystem, loadFileSystem } from "@/lib/storage-utils"
 import { Progress } from "@/components/ui/progress"
+import type { FileSystemItem } from "@/types/file-system"
 import Image from "next/image"
 
 type FileType = globalThis.File
 
-type FileSystemItem = {
-  id: string
-  name: string
-  type: "folder" | "image"
-  path: string
-  children?: FileSystemItem[]
-  url?: string
-  size?: number
-  blobPath?: string
-}
+// Initial file system structure
+const initialFileSystem: FileSystemItem[] = [
+  {
+    id: "1",
+    name: "Products",
+    type: "folder",
+    path: "/Products",
+    children: [
+      {
+        id: "2",
+        name: "Electronics",
+        type: "folder",
+        path: "/Products/Electronics",
+        children: [
+          {
+            id: "3",
+            name: "laptop.jpg",
+            type: "image",
+            path: "/Products/Electronics/laptop.jpg",
+            url: "/placeholder.svg?height=300&width=400",
+          },
+        ],
+      },
+      {
+        id: "4",
+        name: "Clothing",
+        type: "folder",
+        path: "/Products/Clothing",
+        children: [],
+      },
+    ],
+  },
+]
 
 export function FileExplorer() {
-  const [fileSystem, setFileSystem] = useState<FileSystemItem[]>([
-    {
-      id: "1",
-      name: "Products",
-      type: "folder",
-      path: "/Products",
-      children: [
-        {
-          id: "2",
-          name: "Electronics",
-          type: "folder",
-          path: "/Products/Electronics",
-          children: [
-            {
-              id: "3",
-              name: "laptop.jpg",
-              type: "image",
-              path: "/Products/Electronics/laptop.jpg",
-              url: "/placeholder.svg?height=300&width=400",
-            },
-          ],
-        },
-        {
-          id: "4",
-          name: "Clothing",
-          type: "folder",
-          path: "/Products/Clothing",
-          children: [],
-        },
-      ],
-    },
-  ])
+  const [fileSystem, setFileSystem] = useState<FileSystemItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
 
   const [selectedItem, setSelectedItem] = useState<FileSystemItem | null>(null)
   const [selectedItems, setSelectedItems] = useState<FileSystemItem[]>([])
@@ -84,6 +79,35 @@ export function FileExplorer() {
   const [isMultiDragging, setIsMultiDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+
+  // Load file system from localStorage on component mount
+  useEffect(() => {
+    const loadSavedFileSystem = async () => {
+      try {
+        const savedFileSystem = loadFileSystem()
+        if (savedFileSystem && savedFileSystem.length > 0) {
+          setFileSystem(savedFileSystem)
+        } else {
+          setFileSystem(initialFileSystem)
+          saveFileSystem(initialFileSystem)
+        }
+      } catch (error) {
+        console.error("Error loading file system:", error)
+        setFileSystem(initialFileSystem)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadSavedFileSystem()
+  }, [])
+
+  // Save file system to localStorage whenever it changes
+  useEffect(() => {
+    if (!isLoading) {
+      saveFileSystem(fileSystem)
+    }
+  }, [fileSystem, isLoading])
 
   const getCurrentFolderContents = (path: string = currentPath): FileSystemItem[] => {
     if (path === "/") return fileSystem
@@ -886,6 +910,15 @@ export function FileExplorer() {
         {item.type === "folder" && item.children && renderFileSystem(item.children, depth + 1)}
       </div>
     ))
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <span className="ml-2">Loading file system...</span>
+      </div>
+    )
   }
 
   return (
