@@ -150,63 +150,89 @@ export function FileExplorer() {
   }
 
   const handleItemClick = (e: React.MouseEvent, item: FileSystemItem) => {
-    // Handle double-click to navigate into folders
-    if (e.detail === 2 && item.type === "folder") {
-      setCurrentPath(item.path)
-      setSelectedItem(item)
-      setSelectedItems([])
-      return
-    }
-
-    // Single click with no modifier keys - select only this item
-    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      setSelectedItem(item)
-      setSelectedItems([item])
-      setLastSelectedId(item.id)
-      return
-    }
-
-    // Ctrl/Cmd+click - toggle selection of this item
-    if (e.ctrlKey || e.metaKey) {
-      const isSelected = selectedItems.some((selected) => selected.id === item.id)
-
-      if (isSelected) {
-        setSelectedItems(selectedItems.filter((selected) => selected.id !== item.id))
-      } else {
-        setSelectedItems([...selectedItems, item])
-      }
-
-      setSelectedItem(item)
-      setLastSelectedId(item.id)
-      return
-    }
-
-    // Shift+click - select range
-    if (e.shiftKey && lastSelectedId) {
-      const currentItems = getCurrentFolderContents()
-      const lastSelectedIndex = currentItems.findIndex((i) => i.id === lastSelectedId)
-      const currentIndex = currentItems.findIndex((i) => i.id === item.id)
-
-      if (lastSelectedIndex !== -1 && currentIndex !== -1) {
-        const start = Math.min(lastSelectedIndex, currentIndex)
-        const end = Math.max(lastSelectedIndex, currentIndex)
-        const itemsInRange = currentItems.slice(start, end + 1)
-
-        setSelectedItems(itemsInRange)
+    try {
+      // Handle double-click to navigate into folders
+      if (e.detail === 2 && item.type === "folder") {
+        setCurrentPath(item.path)
         setSelectedItem(item)
+        setSelectedItems([])
+        return
       }
+
+      // Single click with no modifier keys - select only this item
+      if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        setSelectedItem(item)
+        setSelectedItems([item])
+        setLastSelectedId(item.id)
+        return
+      }
+
+      // Ctrl/Cmd+click - toggle selection of this item
+      if (e.ctrlKey || e.metaKey) {
+        const isSelected = selectedItems.some((selected) => selected.id === item.id)
+
+        if (isSelected) {
+          setSelectedItems(selectedItems.filter((selected) => selected.id !== item.id))
+        } else {
+          setSelectedItems([...selectedItems, item])
+        }
+
+        setSelectedItem(item)
+        setLastSelectedId(item.id)
+        return
+      }
+
+      // Shift+click - select range
+      if (e.shiftKey && lastSelectedId) {
+        const currentItems = getCurrentFolderContents()
+        const lastSelectedIndex = currentItems.findIndex((i) => i.id === lastSelectedId)
+        const currentIndex = currentItems.findIndex((i) => i.id === item.id)
+
+        if (lastSelectedIndex !== -1 && currentIndex !== -1) {
+          const start = Math.min(lastSelectedIndex, currentIndex)
+          const end = Math.max(lastSelectedIndex, currentIndex)
+          const itemsInRange = currentItems.slice(start, end + 1)
+
+          setSelectedItems(itemsInRange)
+          setSelectedItem(item)
+        }
+      }
+    } catch (error) {
+      console.error("Error handling item click:", error)
+      toast({
+        title: "Error",
+        description: "There was a problem selecting this item",
+        variant: "destructive",
+      })
     }
   }
 
   const handleBackClick = () => {
-    if (currentPath === "/") return
+    try {
+      if (currentPath === "/") return
 
-    const pathParts = currentPath.split("/")
-    pathParts.pop()
-    const parentPath = pathParts.join("/") || "/"
-    setCurrentPath(parentPath)
-    setSelectedItem(findItemByPath(parentPath))
-    setSelectedItems([])
+      const pathParts = currentPath.split("/").filter(Boolean)
+      if (pathParts.length === 0) return
+
+      pathParts.pop()
+      const parentPath = pathParts.length === 0 ? "/" : `/${pathParts.join("/")}`
+
+      setCurrentPath(parentPath)
+      const parentItem = findItemByPath(parentPath)
+      setSelectedItem(parentItem)
+      setSelectedItems([])
+    } catch (error) {
+      console.error("Error navigating back:", error)
+      // Reset to root as a fallback
+      setCurrentPath("/")
+      setSelectedItem(null)
+      setSelectedItems([])
+      toast({
+        title: "Navigation Error",
+        description: "There was a problem navigating back. Returned to root directory.",
+        variant: "destructive",
+      })
+    }
   }
 
   const addFolder = () => {
@@ -273,6 +299,7 @@ export function FileExplorer() {
 
     const updatedFileSystem = [...fileSystem]
     const newImages: FileSystemItem[] = []
+    let successCount = 0
 
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i]
@@ -292,6 +319,7 @@ export function FileExplorer() {
           }
 
           newImages.push(newImage)
+          successCount++
         } else {
           toast({
             title: "Upload Error",
@@ -335,6 +363,10 @@ export function FileExplorer() {
       }
 
       setFileSystem(updatedFileSystem)
+
+      // Save to localStorage immediately after updating
+      saveFileSystem(updatedFileSystem)
+
       toast({
         title: "Success",
         description: `Uploaded ${newImages.length} image${newImages.length > 1 ? "s" : ""} successfully`,

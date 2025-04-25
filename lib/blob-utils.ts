@@ -7,11 +7,30 @@ export async function uploadToBlob(file: File, path: string) {
     const filename = `${nanoid()}-${file.name}`
     const blobPath = `${path}/${filename}`.replace(/\/\//g, "/")
 
+    // Check if file is valid
+    if (!file || !(file instanceof File)) {
+      return {
+        success: false,
+        error: "Invalid file provided",
+      }
+    }
+
+    if (!path) {
+      return {
+        success: false,
+        error: "Invalid path provided",
+      }
+    }
+
+    console.log("Uploading to blob:", blobPath)
+
     // Upload to Vercel Blob
     const { url } = await put(blobPath, file, {
       access: "public",
       addRandomSuffix: false,
     })
+
+    console.log("Upload successful:", url)
 
     return {
       success: true,
