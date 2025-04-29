@@ -59,7 +59,9 @@
     "vaul": "^0.9.6",
     "zod": "^3.24.1",
     "@vercel/blob": "latest",
-    "nanoid": "latest"
+    "nanoid": "latest",
+    "path": "latest",
+    "fs": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

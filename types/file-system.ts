@@ -6,5 +6,4 @@ export type FileSystemItem = {
   children?: FileSystemItem[]
   url?: string
   size?: number
-  blobPath?: string
 }
