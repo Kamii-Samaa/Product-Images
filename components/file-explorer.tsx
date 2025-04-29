@@ -465,23 +465,11 @@ export function FileExplorer() {
 
         {/* Path Reference */}
         <div className="mt-4 p-4 border rounded-md bg-muted/20">
-          <h3 className="text-sm font-medium mb-2">GitHub Integration Guide</h3>
+          <h3 className="text-sm font-medium mb-2">Product Upload Guide</h3>
           <p className="text-sm text-muted-foreground">
-            Images added to your GitHub repository's <code className="bg-muted px-1 rounded">public</code> directory
+            Images added to the GitHub repository's <code className="bg-muted px-1 rounded">public</code> directory
             will automatically appear here.
           </p>
-          <p className="text-sm text-muted-foreground mt-2">To add new images:</p>
-          <ol className="text-sm text-muted-foreground mt-1 list-decimal pl-5">
-            <li>
-              Add image files to your repository's <code className="bg-muted px-1 rounded">public</code> directory
-            </li>
-            <li>
-              Create folders in the <code className="bg-muted px-1 rounded">public</code> directory to organize your
-              images
-            </li>
-            <li>Commit and push your changes to GitHub</li>
-            <li>Click the refresh button in this app to see your changes</li>
-          </ol>
           <p className="text-sm text-muted-foreground mt-2">
             You can share direct links to any image by selecting it and copying the direct link.
           </p>
