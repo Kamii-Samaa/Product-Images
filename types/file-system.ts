@@ -6,4 +6,6 @@ export type FileSystemItem = {
   children?: FileSystemItem[]
   url?: string
   size?: number
+  width?: number // Added for image dimensions
+  height?: number // Added for image dimensions
 }

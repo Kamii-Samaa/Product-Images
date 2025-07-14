@@ -2,9 +2,9 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Product Images',
-  description: 'Product Images',
-  generator: 'Kamiii Samaaa',
+  title: 'Brand Image Library',
+  description: 'Created by Kamii Samaaa',
+  generator: 'Kamii Samaaa',
 }
 
 export default function RootLayout({
