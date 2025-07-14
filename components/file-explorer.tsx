@@ -95,15 +95,27 @@ export function FileExplorer() {
     return null
   }
 
-  const getCurrentFolderContents = (path: string = currentPath): FileSystemItem[] => {
-    if (path === "/") return fileSystem
+  // Helper to get all items recursively for global search
+  const getAllItemsRecursive = (items: FileSystemItem[], all: FileSystemItem[] = []): FileSystemItem[] => {
+    items.forEach((item) => {
+      all.push(item)
+      if (item.type === "folder" && item.children) {
+        getAllItemsRecursive(item.children, all)
+      }
+    })
+    return all
+  }
 
-    const folder = findItemByPath(path)
-    return folder?.children || []
+  // Helper to get contents of the current folder
+  const getCurrentFolderContents = (path: string): FileSystemItem[] => {
+    const currentItem = findItemByPath(path)
+    return currentItem ? currentItem.children || [] : []
   }
 
   const getFilteredAndSortedContents = useMemo(() => {
-    let contents = getCurrentFolderContents()
+    const sourceItems = searchTerm ? getAllItemsRecursive(fileSystem) : getCurrentFolderContents(currentPath)
+
+    let contents = sourceItems
 
     // Filter by search term
     if (searchTerm) {
@@ -145,7 +157,16 @@ export function FileExplorer() {
 
   const handleItemClick = (e: React.MouseEvent, item: FileSystemItem) => {
     try {
-      // Handle double-click to navigate into folders
+      // If searching, clicking an item should navigate to its parent folder
+      if (searchTerm) {
+        const parentPath = item.path.substring(0, item.path.lastIndexOf("/")) || "/"
+        setCurrentPath(parentPath)
+        setSearchTerm("") // Clear search after navigating
+        setSelectedItem(item) // Select the item in its new context
+        return
+      }
+
+      // Handle double-click to navigate into folders (only when not searching)
       if (e.detail === 2 && item.type === "folder") {
         setCurrentPath(item.path)
         setSelectedItem(null) // Clear selection when navigating
@@ -207,7 +228,7 @@ export function FileExplorer() {
   const handleBreadcrumbClick = (path: string) => {
     setCurrentPath(path)
     setSelectedItem(null)
-    setSearchTerm("")
+    setSearchTerm("") // Clear search when navigating via breadcrumbs
   }
 
   const copyImagePath = (path: string) => {
@@ -255,6 +276,7 @@ export function FileExplorer() {
             selectedItem?.id === item.id && "bg-accent",
           )}
           onClick={(e) => handleItemClick(e, item)}
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
           {item.type === "folder" ? (
             <>
@@ -355,7 +377,7 @@ export function FileExplorer() {
             ))}
           </div>
           <Input
-            placeholder="Search current folder..."
+            placeholder="Search all folders..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="max-w-xs"
@@ -442,8 +464,11 @@ export function FileExplorer() {
               {getFilteredAndSortedContents.length === 0 ? (
                 <div className="col-span-full flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <Folder className="h-12 w-12 mb-2 opacity-20" />
-                  <p>This folder is empty or no items match your search/filter.</p>
-                  <p className="text-sm">Add images to this folder in your GitHub repository</p>
+                  <p>
+                    {searchTerm
+                      ? "No items match your search."
+                      : "This folder is empty. Add images to this folder in your GitHub repository."}
+                  </p>
                 </div>
               ) : (
                 getFilteredAndSortedContents.map((item) => (
