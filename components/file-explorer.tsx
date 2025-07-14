@@ -83,7 +83,7 @@ export function FileExplorer() {
   }
 
   const findItemByPath = (path: string, items: FileSystemItem[] = fileSystem): FileSystemItem | null => {
-    if (path === "/") return null
+    if (path === "/") return null // Root is handled separately
 
     for (const item of items) {
       if (item.path === path) return item
@@ -108,6 +108,9 @@ export function FileExplorer() {
 
   // Helper to get contents of the current folder
   const getCurrentFolderContents = (path: string): FileSystemItem[] => {
+    if (path === "/") {
+      return fileSystem // Return top-level items for root path
+    }
     const currentItem = findItemByPath(path)
     return currentItem ? currentItem.children || [] : []
   }
