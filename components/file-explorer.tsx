@@ -2,7 +2,18 @@
 
 import React from "react"
 import { useState, useEffect, useMemo } from "react"
-import { Folder, ImageIcon, Loader2, ExternalLink, RefreshCw, Grid, List, Download } from "lucide-react"
+import {
+  Folder,
+  ImageIcon,
+  Loader2,
+  ExternalLink,
+  RefreshCw,
+  Grid,
+  List,
+  Download,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -25,6 +36,7 @@ export function FileExplorer() {
   const [searchTerm, setSearchTerm] = useState<string>("")
   const [sortOrder, setSortOrder] = useState<SortOrder>("type-asc")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [expandedSidebarFolders, setExpandedSidebarFolders] = useState<Set<string>>(new Set())
 
   // Fetch file system from API on component mount
   useEffect(() => {
@@ -234,6 +246,55 @@ export function FileExplorer() {
     }
   }
 
+  const renderFileSystem = (items: FileSystemItem[], depth = 0) => {
+    return items.map((item) => (
+      <div key={item.id}>
+        <div
+          className={cn(
+            "flex items-center gap-2 p-2 cursor-pointer hover:bg-accent rounded-md",
+            selectedItem?.id === item.id && "bg-accent",
+          )}
+          onClick={(e) => handleItemClick(e, item)}
+        >
+          {item.type === "folder" ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 p-0"
+                onClick={(e) => {
+                  e.stopPropagation() // Prevent folder navigation on toggle click
+                  setExpandedSidebarFolders((prev) => {
+                    const newSet = new Set(prev)
+                    if (newSet.has(item.id)) {
+                      newSet.delete(item.id)
+                    } else {
+                      newSet.add(item.id)
+                    }
+                    return newSet
+                  })
+                }}
+              >
+                {expandedSidebarFolders.has(item.id) ? (
+                  <ChevronDown className="h-4 w-4 text-blue-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-blue-500" />
+                )}
+              </Button>
+              <Folder className="h-4 w-4 text-blue-500" />
+            </>
+          ) : (
+            <ImageIcon className="h-4 w-4 text-green-500" />
+          )}
+          <span className="text-sm truncate">{item.name}</span>
+        </div>
+        {item.type === "folder" && item.children && expandedSidebarFolders.has(item.id) && (
+          <div className="ml-4">{renderFileSystem(item.children, depth + 1)}</div>
+        )}
+      </div>
+    ))
+  }
+
   if (isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
@@ -265,27 +326,7 @@ export function FileExplorer() {
             {fileSystem.length === 0 && !isLoading ? (
               <div className="text-center text-muted-foreground py-4">No files found.</div>
             ) : (
-              fileSystem.map((item) => (
-                <div key={item.id}>
-                  <div
-                    className={cn(
-                      "flex items-center gap-2 p-2 cursor-pointer hover:bg-accent rounded-md",
-                      selectedItem?.id === item.id && "bg-accent",
-                    )}
-                    onClick={(e) => handleItemClick(e, item)}
-                  >
-                    {item.type === "folder" ? (
-                      <Folder className="h-4 w-4 text-blue-500" />
-                    ) : (
-                      <ImageIcon className="h-4 w-4 text-green-500" />
-                    )}
-                    <span className="text-sm truncate">{item.name}</span>
-                  </div>
-                  {item.type === "folder" && item.children && (
-                    <div className="ml-4">{/* Indent children in sidebar */}</div>
-                  )}
-                </div>
-              ))
+              renderFileSystem(fileSystem)
             )}
           </div>
         </ScrollArea>
