@@ -1,15 +1,19 @@
 "use client"
 
-import type React from "react"
-import { useState, useRef, useEffect } from "react"
-import { Folder, ImageIcon, Loader2, ExternalLink, RefreshCw } from "lucide-react"
+import React from "react"
+import { useState, useEffect, useMemo } from "react"
+import { Folder, ImageIcon, Loader2, ExternalLink, RefreshCw, Grid, List, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "@/components/ui/use-toast"
 import { cn } from "@/lib/utils"
 import type { FileSystemItem } from "@/types/file-system"
 import Image from "next/image"
+
+type SortOrder = "name-asc" | "name-desc" | "type-asc" | "size-desc"
 
 export function FileExplorer() {
   const [fileSystem, setFileSystem] = useState<FileSystemItem[]>([])
@@ -17,14 +21,10 @@ export function FileExplorer() {
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   const [selectedItem, setSelectedItem] = useState<FileSystemItem | null>(null)
-  const [selectedItems, setSelectedItems] = useState<FileSystemItem[]>([])
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
   const [currentPath, setCurrentPath] = useState<string>("/")
-
-  const [draggedItem, setDraggedItem] = useState<FileSystemItem | null>(null)
-  const [dragOverItem, setDragOverItem] = useState<string | null>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [isMultiDragging, setIsMultiDragging] = useState(false)
+  const [searchTerm, setSearchTerm] = useState<string>("")
+  const [sortOrder, setSortOrder] = useState<SortOrder>("type-asc")
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
 
   // Fetch file system from API on component mount
   useEffect(() => {
@@ -70,22 +70,6 @@ export function FileExplorer() {
     fetchFileSystem()
   }
 
-  const getCurrentFolderContents = (path: string = currentPath): FileSystemItem[] => {
-    if (path === "/") return fileSystem
-
-    const folder = findItemByPath(path)
-    return folder?.children || []
-  }
-
-  // Get all items in the current folder for selection purposes
-  const currentFolderItems = getCurrentFolderContents()
-
-  // Effect to clear selection when changing folders
-  useEffect(() => {
-    setSelectedItems([])
-    setLastSelectedId(null)
-  }, [currentPath])
-
   const findItemByPath = (path: string, items: FileSystemItem[] = fileSystem): FileSystemItem | null => {
     if (path === "/") return null
 
@@ -99,65 +83,66 @@ export function FileExplorer() {
     return null
   }
 
-  const findItemById = (id: string, items: FileSystemItem[] = fileSystem): FileSystemItem | null => {
-    for (const item of items) {
-      if (item.id === id) return item
-      if (item.children) {
-        const found = findItemById(id, item.children)
-        if (found) return found
-      }
-    }
-    return null
+  const getCurrentFolderContents = (path: string = currentPath): FileSystemItem[] => {
+    if (path === "/") return fileSystem
+
+    const folder = findItemByPath(path)
+    return folder?.children || []
   }
+
+  const getFilteredAndSortedContents = useMemo(() => {
+    let contents = getCurrentFolderContents()
+
+    // Filter by search term
+    if (searchTerm) {
+      const lowerCaseSearchTerm = searchTerm.toLowerCase()
+      contents = contents.filter((item) => item.name.toLowerCase().includes(lowerCaseSearchTerm))
+    }
+
+    // Sort
+    contents.sort((a, b) => {
+      // Always sort folders first
+      if (sortOrder === "type-asc") {
+        if (a.type === "folder" && b.type !== "folder") return -1
+        if (a.type !== "folder" && b.type === "folder") return 1
+      }
+
+      // Then sort by name
+      if (sortOrder === "name-asc") {
+        return a.name.localeCompare(b.name)
+      }
+      if (sortOrder === "name-desc") {
+        return b.name.localeCompare(a.name)
+      }
+
+      // Sort by size (only for images, folders have no size)
+      if (sortOrder === "size-desc") {
+        if (a.type === "image" && b.type === "image") {
+          return (b.size || 0) - (a.size || 0)
+        }
+        // Keep folders at the top if type-asc is implied, otherwise no specific order for mixed types
+        if (a.type === "folder" && b.type !== "folder") return -1
+        if (a.type !== "folder" && b.type === "folder") return 1
+      }
+
+      return 0 // No change
+    })
+
+    return contents
+  }, [fileSystem, currentPath, searchTerm, sortOrder])
 
   const handleItemClick = (e: React.MouseEvent, item: FileSystemItem) => {
     try {
       // Handle double-click to navigate into folders
       if (e.detail === 2 && item.type === "folder") {
         setCurrentPath(item.path)
-        setSelectedItem(item)
-        setSelectedItems([])
+        setSelectedItem(null) // Clear selection when navigating
+        setSearchTerm("") // Clear search when navigating
         return
       }
 
-      // Single click with no modifier keys - select only this item
-      if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-        setSelectedItem(item)
-        setSelectedItems([item])
-        setLastSelectedId(item.id)
-        return
-      }
-
-      // Ctrl/Cmd+click - toggle selection of this item
-      if (e.ctrlKey || e.metaKey) {
-        const isSelected = selectedItems.some((selected) => selected.id === item.id)
-
-        if (isSelected) {
-          setSelectedItems(selectedItems.filter((selected) => selected.id !== item.id))
-        } else {
-          setSelectedItems([...selectedItems, item])
-        }
-
-        setSelectedItem(item)
-        setLastSelectedId(item.id)
-        return
-      }
-
-      // Shift+click - select range
-      if (e.shiftKey && lastSelectedId) {
-        const currentItems = getCurrentFolderContents()
-        const lastSelectedIndex = currentItems.findIndex((i) => i.id === lastSelectedId)
-        const currentIndex = currentItems.findIndex((i) => i.id === item.id)
-
-        if (lastSelectedIndex !== -1 && currentIndex !== -1) {
-          const start = Math.min(lastSelectedIndex, currentIndex)
-          const end = Math.max(lastSelectedIndex, currentIndex)
-          const itemsInRange = currentItems.slice(start, end + 1)
-
-          setSelectedItems(itemsInRange)
-          setSelectedItem(item)
-        }
-      }
+      // Single click - select this item
+      setSelectedItem(item)
     } catch (error) {
       console.error("Error handling item click:", error)
       toast({
@@ -179,15 +164,14 @@ export function FileExplorer() {
       const parentPath = pathParts.length === 0 ? "/" : `/${pathParts.join("/")}`
 
       setCurrentPath(parentPath)
-      const parentItem = findItemByPath(parentPath)
-      setSelectedItem(parentItem)
-      setSelectedItems([])
+      setSelectedItem(null) // Clear selection when navigating
+      setSearchTerm("") // Clear search when navigating
     } catch (error) {
       console.error("Error navigating back:", error)
       // Reset to root as a fallback
       setCurrentPath("/")
       setSelectedItem(null)
-      setSelectedItems([])
+      setSearchTerm("")
       toast({
         title: "Navigation Error",
         description: "There was a problem navigating back. Returned to root directory.",
@@ -196,110 +180,22 @@ export function FileExplorer() {
     }
   }
 
-  const getAllPaths = (items: FileSystemItem[] = fileSystem, paths: string[] = ["/"]): string[] => {
-    items.forEach((item) => {
-      if (item.type === "folder") {
-        paths.push(item.path)
-        if (item.children) {
-          getAllPaths(item.children, paths)
-        }
-      }
-    })
-    return paths
+  const getBreadcrumbs = () => {
+    const paths = currentPath.split("/").filter(Boolean)
+    let current = ""
+    return [
+      { name: "Root", path: "/" },
+      ...paths.map((part) => {
+        current += `/${part}`
+        return { name: part, path: current }
+      }),
+    ]
   }
 
-  const handleDragStart = (e: React.DragEvent, item: FileSystemItem) => {
-    e.stopPropagation()
-
-    // If the item being dragged is not in the selection, make it the only selected item
-    if (!selectedItems.some((selected) => selected.id === item.id)) {
-      setSelectedItems([item])
-      setSelectedItem(item)
-    }
-
-    setDraggedItem(item)
-    setIsMultiDragging(selectedItems.length > 1)
-
-    // Set data for the drag operation
-    e.dataTransfer.setData("text/plain", JSON.stringify(selectedItems.map((item) => item.path)))
-    e.dataTransfer.effectAllowed = "move"
-  }
-
-  const handleDragOver = (e: React.DragEvent, targetPath: string) => {
-    e.preventDefault()
-    e.stopPropagation()
-
-    // Clear any existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-
-    // Set a timeout to update the dragOverItem state
-    timeoutRef.current = setTimeout(() => {
-      setDragOverItem(targetPath)
-    }, 100)
-
-    e.dataTransfer.dropEffect = "move"
-  }
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-
-    // Clear any existing timeout
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-
-    // Set a timeout to clear the dragOverItem state
-    timeoutRef.current = setTimeout(() => {
-      setDragOverItem(null)
-    }, 100)
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Select all items with Ctrl+A
-    if ((e.ctrlKey || e.metaKey) && e.key === "a") {
-      e.preventDefault()
-      setSelectedItems(getCurrentFolderContents())
-    }
-
-    // Escape key to clear selection
-    if (e.key === "Escape") {
-      e.preventDefault()
-      setSelectedItems([])
-    }
-  }
-
-  const renderFileSystem = (items: FileSystemItem[], depth = 0) => {
-    return items.map((item) => (
-      <div key={item.id}>
-        <div
-          className={cn(
-            "flex items-center gap-2 p-2 cursor-pointer hover:bg-accent rounded-md",
-            selectedItem?.id === item.id && "bg-accent",
-            selectedItems.some((selected) => selected.id === item.id) && "bg-accent/80 border border-primary/30",
-            dragOverItem === item.path &&
-              item.type === "folder" &&
-              "bg-accent/50 border-2 border-dashed border-primary",
-          )}
-          onClick={(e) => handleItemClick(e, item)}
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          draggable
-          onDragStart={(e) => handleDragStart(e, item)}
-          onDragOver={(e) => item.type === "folder" && handleDragOver(e, item.path)}
-          onDragLeave={handleDragLeave}
-        >
-          {item.type === "folder" ? (
-            <Folder className="h-4 w-4 text-blue-500" />
-          ) : (
-            <ImageIcon className="h-4 w-4 text-green-500" />
-          )}
-          <span className="text-sm truncate">{item.name}</span>
-        </div>
-        {item.type === "folder" && item.children && renderFileSystem(item.children, depth + 1)}
-      </div>
-    ))
+  const handleBreadcrumbClick = (path: string) => {
+    setCurrentPath(path)
+    setSelectedItem(null)
+    setSearchTerm("")
   }
 
   const copyImagePath = (path: string) => {
@@ -321,6 +217,23 @@ export function FileExplorer() {
       })
   }
 
+  const handleDownloadClick = (item: FileSystemItem) => {
+    if (item.url) {
+      const link = document.createElement("a")
+      link.href = item.url
+      link.download = item.name // Suggest original filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } else {
+      toast({
+        title: "Download Error",
+        description: "Could not find a URL for this item to download.",
+        variant: "destructive",
+      })
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
@@ -331,7 +244,7 @@ export function FileExplorer() {
   }
 
   return (
-    <div className="flex h-full w-full" onKeyDown={handleKeyDown} tabIndex={0}>
+    <div className="flex h-full w-full">
       {/* Sidebar */}
       <div className="w-64 border-r bg-muted/40 flex flex-col">
         <div className="p-4 font-semibold flex justify-between items-center">
@@ -348,19 +261,78 @@ export function FileExplorer() {
         </div>
         <Separator />
         <ScrollArea className="flex-1">
-          <div className="p-2">{renderFileSystem(fileSystem)}</div>
+          <div className="p-2">
+            {fileSystem.length === 0 && !isLoading ? (
+              <div className="text-center text-muted-foreground py-4">No files found.</div>
+            ) : (
+              fileSystem.map((item) => (
+                <div key={item.id}>
+                  <div
+                    className={cn(
+                      "flex items-center gap-2 p-2 cursor-pointer hover:bg-accent rounded-md",
+                      selectedItem?.id === item.id && "bg-accent",
+                    )}
+                    onClick={(e) => handleItemClick(e, item)}
+                  >
+                    {item.type === "folder" ? (
+                      <Folder className="h-4 w-4 text-blue-500" />
+                    ) : (
+                      <ImageIcon className="h-4 w-4 text-green-500" />
+                    )}
+                    <span className="text-sm truncate">{item.name}</span>
+                  </div>
+                  {item.type === "folder" && item.children && (
+                    <div className="ml-4">{/* Indent children in sidebar */}</div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </ScrollArea>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 p-4 flex flex-col">
+        {/* Toolbar */}
         <div className="flex items-center gap-2 mb-4">
           <Button variant="outline" size="sm" onClick={handleBackClick} disabled={currentPath === "/"}>
             Back
           </Button>
-          <div className="text-sm bg-muted px-3 py-1 rounded-md flex-1">
-            {currentPath === "/" ? "/ (Root)" : currentPath}
+          <div className="flex-1 flex items-center gap-1 text-sm bg-muted px-3 py-1 rounded-md overflow-hidden">
+            {getBreadcrumbs().map((crumb, index, arr) => (
+              <React.Fragment key={crumb.path}>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => handleBreadcrumbClick(crumb.path)}
+                  className="p-0 h-auto text-sm"
+                >
+                  {crumb.name}
+                </Button>
+                {index < arr.length - 1 && <span className="mx-1">/</span>}
+              </React.Fragment>
+            ))}
           </div>
+          <Input
+            placeholder="Search current folder..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-xs"
+          />
+          <Select value={sortOrder} onValueChange={(value: SortOrder) => setSortOrder(value)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="type-asc">Type (Folders First)</SelectItem>
+              <SelectItem value="name-asc">Name (A-Z)</SelectItem>
+              <SelectItem value="name-desc">Name (Z-A)</SelectItem>
+              <SelectItem value="size-desc">Size (Largest First)</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="icon" onClick={() => setViewMode(viewMode === "grid" ? "list" : "grid")}>
+            {viewMode === "grid" ? <List className="h-4 w-4" /> : <Grid className="h-4 w-4" />}
+          </Button>
         </div>
 
         {/* Content Area */}
@@ -381,6 +353,11 @@ export function FileExplorer() {
                 {selectedItem.size && (
                   <p className="text-sm text-muted-foreground mt-1">
                     Size: {(selectedItem.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                )}
+                {selectedItem.width && selectedItem.height && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Dimensions: {selectedItem.width}x{selectedItem.height} px
                   </p>
                 )}
                 <div className="mt-4 p-2 bg-muted rounded-md">
@@ -408,39 +385,42 @@ export function FileExplorer() {
                   <code className="text-xs bg-background p-1 rounded mt-1 block overflow-hidden text-ellipsis">
                     {window.location.origin + selectedItem.path}
                   </code>
+                  <Button className="mt-4 w-full" onClick={() => handleDownloadClick(selectedItem)}>
+                    <Download className="h-4 w-4 mr-2" /> Download Image
+                  </Button>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {getCurrentFolderContents().length === 0 ? (
+            <div
+              className={cn(
+                "gap-4",
+                viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "flex flex-col",
+              )}
+            >
+              {getFilteredAndSortedContents.length === 0 ? (
                 <div className="col-span-full flex flex-col items-center justify-center h-64 text-muted-foreground">
                   <Folder className="h-12 w-12 mb-2 opacity-20" />
-                  <p>This folder is empty</p>
+                  <p>This folder is empty or no items match your search/filter.</p>
                   <p className="text-sm">Add images to this folder in your GitHub repository</p>
                 </div>
               ) : (
-                getCurrentFolderContents().map((item) => (
+                getFilteredAndSortedContents.map((item) => (
                   <div
                     key={item.id}
                     className={cn(
-                      "border rounded-md p-4 flex flex-col items-center cursor-pointer hover:bg-accent/50 transition-colors",
-                      selectedItems.some((selected) => selected.id === item.id) &&
-                        "bg-accent/80 border border-primary/30",
-                      dragOverItem === item.path &&
-                        item.type === "folder" &&
-                        "bg-accent/50 border-2 border-dashed border-primary",
+                      "border rounded-md p-4 flex items-center cursor-pointer hover:bg-accent/50 transition-colors",
+                      selectedItem?.id === item.id && "bg-accent/80 border border-primary/30",
+                      viewMode === "grid" ? "flex-col" : "flex-row justify-between",
                     )}
                     onClick={(e) => handleItemClick(e, item)}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, item)}
-                    onDragOver={(e) => item.type === "folder" && handleDragOver(e, item.path)}
-                    onDragLeave={handleDragLeave}
                   >
                     {item.type === "folder" ? (
-                      <Folder className="h-12 w-12 text-blue-500 mb-2" />
+                      <Folder
+                        className={cn("text-blue-500", viewMode === "grid" ? "h-12 w-12 mb-2" : "h-6 w-6 mr-2")}
+                      />
                     ) : (
-                      <div className="relative h-24 w-24 mb-2">
+                      <div className={cn("relative", viewMode === "grid" ? "h-24 w-24 mb-2" : "h-12 w-12 mr-2")}>
                         <Image
                           src={item.url || "/placeholder.svg?height=100&width=100"}
                           alt={item.name}
@@ -449,11 +429,14 @@ export function FileExplorer() {
                         />
                       </div>
                     )}
-                    <span className="text-sm font-medium">{item.name}</span>
-                    <span className="text-xs text-muted-foreground mt-1">{item.path}</span>
-                    {item.size && item.type === "image" && (
-                      <span className="text-xs text-muted-foreground mt-1">
-                        {(item.size / 1024 / 1024).toFixed(2)} MB
+                    <span className="text-sm font-medium truncate">{item.name}</span>
+                    {viewMode === "list" && (
+                      <span className="text-xs text-muted-foreground ml-auto">
+                        {item.type === "folder"
+                          ? "Folder"
+                          : item.size
+                            ? `${(item.size / 1024 / 1024).toFixed(2)} MB`
+                            : "Image"}
                       </span>
                     )}
                   </div>
@@ -463,13 +446,25 @@ export function FileExplorer() {
           )}
         </div>
 
-        {/* Path Reference */}
+        {/* GitHub Integration Guide */}
         <div className="mt-4 p-4 border rounded-md bg-muted/20">
-          <h3 className="text-sm font-medium mb-2">Product Upload Guide</h3>
+          <h3 className="text-sm font-medium mb-2">GitHub Integration Guide</h3>
           <p className="text-sm text-muted-foreground">
-            Images added to the GitHub repository's <code className="bg-muted px-1 rounded">public</code> directory
+            Images added to your GitHub repository's <code className="bg-muted px-1 rounded">public</code> directory
             will automatically appear here.
           </p>
+          <p className="text-sm text-muted-foreground mt-2">To add new images:</p>
+          <ol className="text-sm text-muted-foreground mt-1 list-decimal pl-5">
+            <li>
+              Add image files to your repository's <code className="bg-muted px-1 rounded">public</code> directory
+            </li>
+            <li>
+              Create folders in the <code className="bg-muted px-1 rounded">public</code> directory to organize your
+              images
+            </li>
+            <li>Commit and push your changes to GitHub</li>
+            <li>Click the refresh button in this app to see your changes</li>
+          </ol>
           <p className="text-sm text-muted-foreground mt-2">
             You can share direct links to any image by selecting it and copying the direct link.
           </p>
