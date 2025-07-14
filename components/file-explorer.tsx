@@ -380,7 +380,7 @@ export function FileExplorer() {
             ))}
           </div>
           <Input
-            placeholder="Search all folders..."
+            placeholder="Enter product reference..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="max-w-xs"
