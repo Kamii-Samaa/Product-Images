@@ -1,11 +1,16 @@
 export type FileSystemItem = {
-  id: string
+  id: string // UUID from DB
   name: string
   type: "folder" | "image"
-  path: string
-  children?: FileSystemItem[]
-  url?: string
-  size?: number
-  width?: number // Added for image dimensions
-  height?: number // Added for image dimensions
+  path: string // Full path like /folder/image.jpg
+  url?: string // Vercel Blob URL for images
+  size?: number // File size in bytes
+  width?: number // Image width
+  height?: number // Image height
+  parent_id?: string | null // UUID of parent folder
+  children?: FileSystemItem[] // For tree structure in frontend
+  created_at?: string
+  created_by?: string
 }
+
+export type UserRole = "admin" | "uploader" | "viewer" // Define roles

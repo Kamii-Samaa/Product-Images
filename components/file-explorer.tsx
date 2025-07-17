@@ -13,20 +13,43 @@ import {
   Download,
   ChevronDown,
   ChevronRight,
+  FolderPlus,
+  Upload,
+  Trash2,
+  Move,
+  Pencil,
+  Users,
+  Plus,
+  User,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/use-toast"
 import { cn } from "@/lib/utils"
-import type { FileSystemItem } from "@/types/file-system"
+import type { FileSystemItem, UserRole } from "@/types/file-system"
 import Image from "next/image"
+import { useSession, signOut } from "next-auth/react"
+import { getFileSystem, createFolder, uploadFile, renameItem, moveItem, deleteItem } from "@/actions/file-actions"
+import { addUser, getUsers, updateUserRole, deleteUser } from "@/actions/user-actions"
 
 type SortOrder = "name-asc" | "name-desc" | "type-asc" | "size-desc"
 
+interface UserData {
+  id: string
+  email: string
+  roles: string[]
+}
+
 export function FileExplorer() {
+  const { data: session, status } = useSession()
+  const isAdmin = session?.user?.roles?.includes("admin")
+  const isUploader = session?.user?.roles?.includes("uploader") || isAdmin
+
   const [fileSystem, setFileSystem] = useState<FileSystemItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -38,39 +61,58 @@ export function FileExplorer() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [expandedSidebarFolders, setExpandedSidebarFolders] = useState<Set<string>>(new Set())
 
+  // Dialog states
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+  const [newFolderPath, setNewFolderPath] = useState<string>("/")
+
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [totalFilesToUpload, setTotalFilesToUpload] = useState(0)
+  const [filesUploaded, setFilesUploaded] = useState(0)
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
+  const [newRenameName, setNewRenameName] = useState("")
+
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = useState(false)
+  const [moveToPath, setMoveToPath] = useState<string>("/")
+
+  const [isUserManagementDialogOpen, setIsUserManagementDialogOpen] = useState(false)
+  const [users, setUsers] = useState<UserData[]>([])
+  const [newUserName, setNewUserName] = useState("")
+  const [newUserEmail, setNewUserEmail] = useState("")
+  const [newUserRole, setNewUserRole] = useState<UserRole>("uploader")
+  const [isAddingUser, setIsAddingUser] = useState(false)
+  const [isFetchingUsers, setIsFetchingUsers] = useState(false)
+
   // Fetch file system from API on component mount
   useEffect(() => {
-    fetchFileSystem()
-  }, [])
+    if (status === "authenticated") {
+      fetchFileSystemData()
+    } else if (status === "unauthenticated") {
+      // Redirect to login if not authenticated
+      window.location.href = "/login"
+    }
+  }, [status])
 
-  const fetchFileSystem = async () => {
+  const fetchFileSystemData = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch("/api/filesystem")
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file system: ${response.status}`)
-      }
-
-      const data = await response.json()
-
-      if (data.fileSystem) {
-        setFileSystem(data.fileSystem)
+      const result = await getFileSystem()
+      if (result.success && result.fileSystem) {
+        setFileSystem(result.fileSystem)
       } else {
-        setFileSystem([])
         toast({
-          title: "No files found",
-          description: "No image files were found in the public directory",
+          title: "Error",
+          description: result.error || "Failed to load file system.",
+          variant: "destructive",
         })
+        setFileSystem([])
       }
-    } catch (error) {
-      console.error("Error fetching file system:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load files from the repository",
-        variant: "destructive",
-      })
-      setFileSystem([])
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
@@ -79,11 +121,11 @@ export function FileExplorer() {
 
   const refreshFileSystem = () => {
     setIsRefreshing(true)
-    fetchFileSystem()
+    fetchFileSystemData()
   }
 
   const findItemByPath = (path: string, items: FileSystemItem[] = fileSystem): FileSystemItem | null => {
-    if (path === "/") return null // Root is handled separately
+    if (path === "/") return null
 
     for (const item of items) {
       if (item.path === path) return item
@@ -95,7 +137,6 @@ export function FileExplorer() {
     return null
   }
 
-  // Helper to get all items recursively for global search
   const getAllItemsRecursive = (items: FileSystemItem[], all: FileSystemItem[] = []): FileSystemItem[] => {
     items.forEach((item) => {
       all.push(item)
@@ -106,10 +147,9 @@ export function FileExplorer() {
     return all
   }
 
-  // Helper to get contents of the current folder
   const getCurrentFolderContents = (path: string): FileSystemItem[] => {
     if (path === "/") {
-      return fileSystem // Return top-level items for root path
+      return fileSystem
     }
     const currentItem = findItemByPath(path)
     return currentItem ? currentItem.children || [] : []
@@ -120,21 +160,17 @@ export function FileExplorer() {
 
     let contents = sourceItems
 
-    // Filter by search term
     if (searchTerm) {
       const lowerCaseSearchTerm = searchTerm.toLowerCase()
       contents = contents.filter((item) => item.name.toLowerCase().includes(lowerCaseSearchTerm))
     }
 
-    // Sort
     contents.sort((a, b) => {
-      // Always sort folders first
       if (sortOrder === "type-asc") {
         if (a.type === "folder" && b.type !== "folder") return -1
         if (a.type !== "folder" && b.type === "folder") return 1
       }
 
-      // Then sort by name
       if (sortOrder === "name-asc") {
         return a.name.localeCompare(b.name)
       }
@@ -142,17 +178,15 @@ export function FileExplorer() {
         return b.name.localeCompare(a.name)
       }
 
-      // Sort by size (only for images, folders have no size)
       if (sortOrder === "size-desc") {
         if (a.type === "image" && b.type === "image") {
           return (b.size || 0) - (a.size || 0)
         }
-        // Keep folders at the top if type-asc is implied, otherwise no specific order for mixed types
         if (a.type === "folder" && b.type !== "folder") return -1
         if (a.type !== "folder" && b.type === "folder") return 1
       }
 
-      return 0 // No change
+      return 0
     })
 
     return contents
@@ -160,24 +194,21 @@ export function FileExplorer() {
 
   const handleItemClick = (e: React.MouseEvent, item: FileSystemItem) => {
     try {
-      // If searching, clicking an item should navigate to its parent folder
       if (searchTerm) {
         const parentPath = item.path.substring(0, item.path.lastIndexOf("/")) || "/"
         setCurrentPath(parentPath)
-        setSearchTerm("") // Clear search after navigating
-        setSelectedItem(item) // Select the item in its new context
+        setSearchTerm("")
+        setSelectedItem(item)
         return
       }
 
-      // Handle double-click to navigate into folders (only when not searching)
       if (e.detail === 2 && item.type === "folder") {
         setCurrentPath(item.path)
-        setSelectedItem(null) // Clear selection when navigating
-        setSearchTerm("") // Clear search when navigating
+        setSelectedItem(null)
+        setSearchTerm("")
         return
       }
 
-      // Single click - select this item
       setSelectedItem(item)
     } catch (error) {
       console.error("Error handling item click:", error)
@@ -200,11 +231,10 @@ export function FileExplorer() {
       const parentPath = pathParts.length === 0 ? "/" : `/${pathParts.join("/")}`
 
       setCurrentPath(parentPath)
-      setSelectedItem(null) // Clear selection when navigating
-      setSearchTerm("") // Clear search when navigating
+      setSelectedItem(null)
+      setSearchTerm("")
     } catch (error) {
       console.error("Error navigating back:", error)
-      // Reset to root as a fallback
       setCurrentPath("/")
       setSelectedItem(null)
       setSearchTerm("")
@@ -231,7 +261,7 @@ export function FileExplorer() {
   const handleBreadcrumbClick = (path: string) => {
     setCurrentPath(path)
     setSelectedItem(null)
-    setSearchTerm("") // Clear search when navigating via breadcrumbs
+    setSearchTerm("")
   }
 
   const copyImagePath = (path: string) => {
@@ -257,7 +287,7 @@ export function FileExplorer() {
     if (item.url) {
       const link = document.createElement("a")
       link.href = item.url
-      link.download = item.name // Suggest original filename
+      link.download = item.name
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -270,7 +300,175 @@ export function FileExplorer() {
     }
   }
 
-  const renderFileSystem = (items: FileSystemItem[], depth = 0) => {
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) {
+      toast({ title: "Error", description: "Folder name cannot be empty", variant: "destructive" })
+      return
+    }
+    const result = await createFolder(newFolderName, newFolderPath)
+    if (result.success) {
+      toast({ title: "Success", description: `Folder "${newFolderName}" created.` })
+      setIsNewFolderDialogOpen(false)
+      setNewFolderName("")
+      refreshFileSystem()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to create folder.", variant: "destructive" })
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files)
+      setSelectedFiles(fileArray)
+      if (fileArray.length === 1 && fileArray[0].type.startsWith("image/")) {
+        const reader = new FileReader()
+        reader.onloadend = () => setImagePreview(reader.result as string)
+        reader.readAsDataURL(fileArray[0])
+      } else {
+        setImagePreview(null)
+      }
+    }
+  }
+
+  const handleUploadFiles = async () => {
+    if (selectedFiles.length === 0) {
+      toast({ title: "Error", description: "Please select files to upload.", variant: "destructive" })
+      return
+    }
+
+    setIsUploading(true)
+    setUploadProgress(0)
+    setTotalFilesToUpload(selectedFiles.length)
+    setFilesUploaded(0)
+
+    let successfulUploads = 0
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i]
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("path", currentPath) // Upload to current path
+
+      const result = await uploadFile(formData)
+      if (result.success) {
+        successfulUploads++
+      } else {
+        toast({
+          title: "Upload Failed",
+          description: `Failed to upload ${file.name}: ${result.error}`,
+          variant: "destructive",
+        })
+      }
+      setFilesUploaded(i + 1)
+      setUploadProgress(Math.round(((i + 1) / selectedFiles.length) * 100))
+    }
+
+    setIsUploading(false)
+    setIsUploadDialogOpen(false)
+    setSelectedFiles([])
+    setImagePreview(null)
+    if (successfulUploads > 0) {
+      toast({ title: "Success", description: `Uploaded ${successfulUploads} file(s).` })
+      refreshFileSystem()
+    } else {
+      toast({ title: "No Files Uploaded", description: "No files were successfully uploaded.", variant: "info" })
+    }
+  }
+
+  const handleRename = async () => {
+    if (!selectedItem || !newRenameName.trim()) {
+      toast({ title: "Error", description: "Invalid selection or name.", variant: "destructive" })
+      return
+    }
+    const result = await renameItem(selectedItem.id, newRenameName)
+    if (result.success) {
+      toast({ title: "Success", description: `Renamed "${selectedItem.name}" to "${newRenameName}".` })
+      setIsRenameDialogOpen(false)
+      setSelectedItem(null)
+      refreshFileSystem()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to rename item.", variant: "destructive" })
+    }
+  }
+
+  const handleMove = async () => {
+    if (!selectedItem || !moveToPath) {
+      toast({ title: "Error", description: "Invalid selection or destination.", variant: "destructive" })
+      return
+    }
+    const result = await moveItem(selectedItem.id, moveToPath)
+    if (result.success) {
+      toast({ title: "Success", description: `Moved "${selectedItem.name}" to "${moveToPath}".` })
+      setIsMoveDialogOpen(false)
+      setSelectedItem(null)
+      refreshFileSystem()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to move item.", variant: "destructive" })
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selectedItem) return
+    const result = await deleteItem(selectedItem.id)
+    if (result.success) {
+      toast({ title: "Success", description: `Deleted "${selectedItem.name}".` })
+      setSelectedItem(null)
+      refreshFileSystem()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to delete item.", variant: "destructive" })
+    }
+  }
+
+  const fetchUsers = async () => {
+    setIsFetchingUsers(true)
+    const result = await getUsers()
+    if (result.success && result.users) {
+      setUsers(result.users)
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to fetch users.", variant: "destructive" })
+    }
+    setIsFetchingUsers(false)
+  }
+
+  const handleAddUser = async () => {
+    if (!newUserEmail.trim()) {
+      toast({ title: "Error", description: "Email cannot be empty.", variant: "destructive" })
+      return
+    }
+    setIsAddingUser(true)
+    const result = await addUser(newUserEmail, newUserRole)
+    if (result.success) {
+      toast({ title: "Success", description: `User ${newUserEmail} added as ${newUserRole}.` })
+      setNewUserEmail("")
+      setNewUserRole("uploader")
+      fetchUsers() // Refresh user list
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to add user.", variant: "destructive" })
+    }
+    setIsAddingUser(false)
+  }
+
+  const handleUpdateUserRole = async (userId: string, role: UserRole) => {
+    const result = await updateUserRole(userId, role)
+    if (result.success) {
+      toast({ title: "Success", description: "User role updated." })
+      fetchUsers()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to update role.", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    const result = await deleteUser(userId)
+    if (result.success) {
+      toast({ title: "Success", description: "User deleted." })
+      fetchUsers()
+    } else {
+      toast({ title: "Error", description: result.error || "Failed to delete user.", variant: "destructive" })
+    }
+  }
+
+  const renderFileSystemTree = (items: FileSystemItem[], depth = 0) => {
     return items.map((item) => (
       <div key={item.id}>
         <div
@@ -288,7 +486,7 @@ export function FileExplorer() {
                 size="icon"
                 className="h-4 w-4 p-0"
                 onClick={(e) => {
-                  e.stopPropagation() // Prevent folder navigation on toggle click
+                  e.stopPropagation()
                   setExpandedSidebarFolders((prev) => {
                     const newSet = new Set(prev)
                     if (newSet.has(item.id)) {
@@ -314,19 +512,23 @@ export function FileExplorer() {
           <span className="text-sm truncate">{item.name}</span>
         </div>
         {item.type === "folder" && item.children && expandedSidebarFolders.has(item.id) && (
-          <div className="ml-4">{renderFileSystem(item.children, depth + 1)}</div>
+          <div className="ml-4">{renderFileSystemTree(item.children, depth + 1)}</div>
         )}
       </div>
     ))
   }
 
-  if (isLoading) {
+  if (status === "loading" || isLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2">Loading file system...</span>
+        <span className="ml-2">Loading brand library...</span>
       </div>
     )
+  }
+
+  if (status === "unauthenticated") {
+    return null // Should be redirected by useEffect
   }
 
   return (
@@ -334,16 +536,266 @@ export function FileExplorer() {
       {/* Sidebar */}
       <div className="w-64 border-r bg-muted/40 flex flex-col">
         <div className="p-4 font-semibold flex justify-between items-center">
-          <span>File Explorer</span>
+          <span>Brand Library</span>
           <Button
             variant="ghost"
             size="icon"
             onClick={refreshFileSystem}
             disabled={isRefreshing}
-            title="Refresh file system"
+            title="Refresh assets"
           >
             <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
           </Button>
+        </div>
+        <Separator />
+        <div className="flex flex-col gap-2 p-2">
+          {isUploader && (
+            <Dialog open={isNewFolderDialogOpen} onOpenChange={setIsNewFolderDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full bg-transparent"
+                  onClick={() => setNewFolderPath(currentPath)}
+                >
+                  <FolderPlus className="h-4 w-4 mr-2" />
+                  New Folder
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New Folder</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="path" className="text-sm font-medium">
+                      Parent Path
+                    </Label>
+                    <Select value={newFolderPath} onValueChange={setNewFolderPath}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select parent folder" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="/">/ (Root)</SelectItem>
+                        {getAllItemsRecursive(fileSystem)
+                          .filter((item) => item.type === "folder")
+                          .map((folder) => (
+                            <SelectItem key={folder.id} value={folder.path}>
+                              {folder.path}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="name" className="text-sm font-medium">
+                      Folder Name
+                    </Label>
+                    <Input
+                      id="name"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder="Enter folder name"
+                    />
+                  </div>
+                  <Button onClick={handleCreateFolder}>Create Folder</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {isUploader && (
+            <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="w-full bg-transparent">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Files
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Upload Files</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="upload-path" className="text-sm font-medium">
+                      Upload Path
+                    </Label>
+                    <Select value={currentPath} onValueChange={setCurrentPath}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select upload folder" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="/">/ (Root)</SelectItem>
+                        {getAllItemsRecursive(fileSystem)
+                          .filter((item) => item.type === "folder")
+                          .map((folder) => (
+                            <SelectItem key={folder.id} value={folder.path}>
+                              {folder.path}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="files" className="text-sm font-medium">
+                      Select Files
+                    </Label>
+                    <Input
+                      id="files"
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      ref={fileInputRef}
+                    />
+                  </div>
+                  {selectedFiles.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-sm font-medium mb-2">
+                        {selectedFiles.length} file{selectedFiles.length > 1 ? "s" : ""} selected
+                      </p>
+                      {imagePreview && selectedFiles.length === 1 && (
+                        <div className="relative h-40 w-full">
+                          <Image
+                            src={imagePreview || "/placeholder.svg"}
+                            alt="Preview"
+                            fill
+                            className="object-contain rounded-md"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {isUploading && (
+                    <div className="mt-2">
+                      <p className="text-sm font-medium mb-2">
+                        Uploading {filesUploaded} of {totalFilesToUpload}...
+                      </p>
+                      <div className="h-2 w-full rounded-full bg-secondary">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <Button onClick={handleUploadFiles} disabled={selectedFiles.length === 0 || isUploading}>
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      "Upload"
+                    )}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {isAdmin && (
+            <Dialog open={isUserManagementDialogOpen} onOpenChange={setIsUserManagementDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="w-full bg-transparent" onClick={fetchUsers}>
+                  <Users className="h-4 w-4 mr-2" />
+                  Manage Users
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>User Management</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <h4 className="font-semibold">Add New User</h4>
+                  <div className="grid grid-cols-3 items-center gap-4">
+                    <Label htmlFor="newUserEmail">Email</Label>
+                    <Input
+                      id="newUserEmail"
+                      type="email"
+                      value={newUserEmail}
+                      onChange={(e) => setNewUserEmail(e.target.value)}
+                      placeholder="user@example.com"
+                      className="col-span-2"
+                      disabled={isAddingUser}
+                    />
+                    <Label htmlFor="newUserRole">Role</Label>
+                    <Select
+                      value={newUserRole}
+                      onValueChange={(value: UserRole) => setNewUserRole(value)}
+                      disabled={isAddingUser}
+                    >
+                      <SelectTrigger className="col-span-2">
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="uploader">Uploader</SelectItem>
+                        <SelectItem value="viewer">Viewer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={handleAddUser} className="col-span-3" disabled={isAddingUser}>
+                      {isAddingUser ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4 mr-2" /> Add User
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  <Separator className="my-4" />
+
+                  <h4 className="font-semibold">Existing Users</h4>
+                  {isFetchingUsers ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading users...
+                    </div>
+                  ) : users.length === 0 ? (
+                    <p className="text-center text-muted-foreground">No users found.</p>
+                  ) : (
+                    <ScrollArea className="h-64">
+                      <div className="grid gap-2">
+                        {users.map((user) => (
+                          <div key={user.id} className="flex items-center justify-between border rounded-md p-2">
+                            <div className="flex flex-col">
+                              <span className="font-medium">{user.email}</span>
+                              <span className="text-sm text-muted-foreground">
+                                Roles: {user.roles.join(", ") || "None"}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <Select
+                                value={user.roles[0] || "viewer"} // Assuming single primary role for simplicity
+                                onValueChange={(value: UserRole) => handleUpdateUserRole(user.id, value)}
+                              >
+                                <SelectTrigger className="w-[120px]">
+                                  <SelectValue placeholder="Change role" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="admin">Admin</SelectItem>
+                                  <SelectItem value="uploader">Uploader</SelectItem>
+                                  <SelectItem value="viewer">Viewer</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Button variant="destructive" size="sm" onClick={() => handleDeleteUser(user.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
         <Separator />
         <ScrollArea className="flex-1">
@@ -351,10 +803,15 @@ export function FileExplorer() {
             {fileSystem.length === 0 && !isLoading ? (
               <div className="text-center text-muted-foreground py-4">No files found.</div>
             ) : (
-              renderFileSystem(fileSystem)
+              renderFileSystemTree(fileSystem)
             )}
           </div>
         </ScrollArea>
+        <div className="p-2">
+          <Button variant="outline" className="w-full bg-transparent" onClick={() => signOut()}>
+            <User className="h-4 w-4 mr-2" /> Log Out
+          </Button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -380,7 +837,7 @@ export function FileExplorer() {
             ))}
           </div>
           <Input
-            placeholder="Search all folders..."
+            placeholder="Search all assets..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="max-w-xs"
@@ -400,6 +857,95 @@ export function FileExplorer() {
             {viewMode === "grid" ? <List className="h-4 w-4" /> : <Grid className="h-4 w-4" />}
           </Button>
         </div>
+
+        {/* Selected Item Actions */}
+        {selectedItem && (
+          <div className="flex items-center gap-2 mb-4 p-2 bg-muted rounded-md">
+            <span className="text-sm font-medium">Selected: {selectedItem.name}</span>
+            <div className="ml-auto flex gap-2">
+              {isAdmin && (
+                <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" onClick={() => setNewRenameName(selectedItem.name)}>
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Rename
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Rename {selectedItem.name}</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="rename-name">New Name</Label>
+                        <Input
+                          id="rename-name"
+                          value={newRenameName}
+                          onChange={(e) => setNewRenameName(e.target.value)}
+                          placeholder="Enter new name"
+                        />
+                      </div>
+                      <Button onClick={handleRename}>Rename</Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
+              {isAdmin && (
+                <Dialog open={isMoveDialogOpen} onOpenChange={setIsMoveDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        setMoveToPath(selectedItem.path.substring(0, selectedItem.path.lastIndexOf("/")) || "/")
+                      }
+                    >
+                      <Move className="h-4 w-4 mr-2" />
+                      Move
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Move {selectedItem.name}</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="move-path">Destination Path</Label>
+                        <Select value={moveToPath} onValueChange={setMoveToPath}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select destination folder" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="/">/ (Root)</SelectItem>
+                            {getAllItemsRecursive(fileSystem)
+                              .filter(
+                                (item) =>
+                                  item.type === "folder" &&
+                                  item.id !== selectedItem.id &&
+                                  !item.path.startsWith(selectedItem.path + "/"),
+                              )
+                              .map((folder) => (
+                                <SelectItem key={folder.id} value={folder.path}>
+                                  {folder.path}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button onClick={handleMove}>Move</Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
+              {isAdmin && (
+                <Button variant="destructive" size="sm" onClick={handleDelete}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Content Area */}
         <div className="flex-1 border rounded-md p-4 bg-muted/20">
@@ -470,7 +1016,7 @@ export function FileExplorer() {
                   <p>
                     {searchTerm
                       ? "No items match your search."
-                      : "This folder is empty. Add images to this folder in your GitHub repository."}
+                      : "This folder is empty. Use the 'New Folder' or 'Upload Files' buttons to add content."}
                   </p>
                 </div>
               ) : (
@@ -513,30 +1059,6 @@ export function FileExplorer() {
               )}
             </div>
           )}
-        </div>
-
-        {/* GitHub Integration Guide */}
-        <div className="mt-4 p-4 border rounded-md bg-muted/20">
-          <h3 className="text-sm font-medium mb-2">GitHub Integration Guide</h3>
-          <p className="text-sm text-muted-foreground">
-            Images added to your GitHub repository's <code className="bg-muted px-1 rounded">public</code> directory
-            will automatically appear here.
-          </p>
-          <p className="text-sm text-muted-foreground mt-2">To add new images:</p>
-          <ol className="text-sm text-muted-foreground mt-1 list-decimal pl-5">
-            <li>
-              Add image files to your repository's <code className="bg-muted px-1 rounded">public</code> directory
-            </li>
-            <li>
-              Create folders in the <code className="bg-muted px-1 rounded">public</code> directory to organize your
-              images
-            </li>
-            <li>Commit and push your changes to GitHub</li>
-            <li>Click the refresh button in this app to see your changes</li>
-          </ol>
-          <p className="text-sm text-muted-foreground mt-2">
-            You can share direct links to any image by selecting it and copying the direct link.
-          </p>
         </div>
       </div>
     </div>
